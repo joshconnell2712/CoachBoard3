@@ -212,14 +212,7 @@ const END_ZONE_YARDS = 10;
 const PLAYABLE_YARDS = 50;
 const LOS_YARDS = 30;
 const OFFENSE_LOS_OFFSET_YARDS = 0;
-// Offensive players aligned on the LOS sit just behind it so their icons barely
-// touch the line of scrimmage instead of overlapping it. This applies to all
-// offensive players marked on the LOS: OL, TE, WR, H, etc.
-const OFFENSE_ON_LOS_YARDS = LOS_YARDS + 0.75;
-
-function offenseVisualLOSYards(player: Player) {
-  return OFFENSE_ON_LOS_YARDS;
-}
+const OFFENSE_ON_LOS_YARDS = LOS_YARDS;
 
 const OFFENSE_SIZE = 22;
 const DEFENSE_SIZE = 18;
@@ -950,7 +943,7 @@ function autoSpaceOffensiveLine(players: Player[]) {
       const isCoreOL = OL_IDS.includes(p.id);
       const isAttachedEligible = ATTACHED_ELIGIBLE_IDS.includes(p.id);
       const isNearLineDepth =
-        p.onLOS || Math.abs(p.yardsFromGoal - offenseVisualLOSYards(p)) <= 1.25;
+        p.onLOS || Math.abs(p.yardsFromGoal - OFFENSE_ON_LOS_YARDS) <= 1.25;
       const isNearOLWidth =
         p.x >= minOLX - NEAR_OL_DISTANCE && p.x <= maxOLX + NEAR_OL_DISTANCE;
 
@@ -972,7 +965,7 @@ function autoSpaceOffensiveLine(players: Player[]) {
       4,
       Math.min(96, currentCenter + (index - middleIndex) * LINE_SPACING_GAP)
     ),
-    yardsFromGoal: offenseVisualLOSYards(p),
+    yardsFromGoal: OFFENSE_ON_LOS_YARDS,
     onLOS: true,
   }));
 
@@ -986,9 +979,8 @@ function normalizeOffenseOnLOS(players: Player[]) {
   return players.map((p) => {
     // Keep unbalanced/custom line spacing exactly where the coach saved it.
     // This only normalizes depth for players marked as being on the LOS.
-    // OL gets a slight visual backset so blocking lines have room to target the DL.
     return p.side === "offense" && p.onLOS
-      ? { ...p, yardsFromGoal: offenseVisualLOSYards(p) }
+      ? { ...p, yardsFromGoal: OFFENSE_ON_LOS_YARDS }
       : p;
   });
 }
@@ -1024,7 +1016,7 @@ function makeDefaultOffensePresets(
         ? {
             ...p,
             x: spot[0],
-            yardsFromGoal: spot[2] ? offenseVisualLOSYards(p) : spot[1],
+            yardsFromGoal: spot[2] ? OFFENSE_ON_LOS_YARDS : spot[1],
             onLOS: !!spot[2],
           }
         : p;
@@ -1715,7 +1707,7 @@ function CoachBoardWebApp() {
   const [breakDepth, setBreakDepth] = useState(10);
   const [finishDepth, setFinishDepth] = useState(18);
   const [routeColor, setRouteColor] = useState("#facc15");
-  const [defensiveReadPlayerIds, setDefensiveReadPlayerIds] = useState<string[]>([]);
+  const [defensiveReadPlayerId, setDefensiveReadPlayerId] = useState<string | null>(null);
   const [tool, setTool] = useState("Select");
   const [drawingStyle, setDrawingStyle] = useState<DrawLineStyle>("solid");
   const [drawingMode, setDrawingMode] = useState<DrawLineMode>("curve");
@@ -1796,34 +1788,27 @@ function CoachBoardWebApp() {
   // Unified line sizing system.
   // Routes, solid draw, dotted draw, block lines, arrows, and T-caps now share
   // the same visual stroke size so no tool looks thicker than another.
- // Base stroke for routes (kept same)
-const lineStroke = Math.max(0.45, visualPlayerPx * 0.026);
-const lineOutlineStroke = lineStroke + Math.max(0.14, visualPlayerPx * 0.008);
+  const lineStroke = Math.max(0.45, visualPlayerPx * 0.026);
+  const lineOutlineStroke = lineStroke + Math.max(0.14, visualPlayerPx * 0.008);
 
-// Routes stay bold and readable
-const routeStroke = lineStroke;
-const routeOutlineStroke = lineOutlineStroke;
+  const routeStroke = lineStroke;
+  const routeOutlineStroke = lineOutlineStroke;
 
-// 🔥 BLOCKING LINES — THINNER (MAIN FIX)
-const blockStroke = Math.max(0.32, lineStroke * 0.62);
-const blockOutlineStroke =
-  blockStroke + Math.max(0.1, visualPlayerPx * 0.004);
+  const blockStroke = lineStroke;
+  const blockOutlineStroke = lineOutlineStroke;
 
-// T-cap uses thinner sizing too
-const blockCapStroke = blockStroke;
-const blockCapOutlineStroke = blockOutlineStroke;
+  const blockCapStroke = lineStroke;
+  const blockCapOutlineStroke = lineOutlineStroke;
 
-// Arrows unchanged
-const arrowSize = visualPlayerPx * 0.095;
+  const arrowSize = visualPlayerPx * 0.095;
+  const blockCapSize = visualPlayerPx * 0.045;
 
-// 🔥 Smaller T-cap so it doesn't crowd DL
-const blockCapSize = visualPlayerPx * 0.032;
-
-// Dotted lines unchanged
-const dashPattern = `${Math.max(0.18, lineStroke * 0.65)} ${Math.max(
-  1.15,
-  lineStroke * 2.35
-)}`;
+  // Tight, clean dotted pattern. The round caps in the SVG make this look like
+  // true dots instead of long thick dashes.
+  const dashPattern = `${Math.max(0.18, lineStroke * 0.65)} ${Math.max(
+    1.15,
+    lineStroke * 2.35
+  )}`;
 
   const endzoneFontPx = fieldFullscreen
     ? Math.max(40, Math.min(100, fieldPixelHeight * 0.08))
@@ -1879,20 +1864,6 @@ const dashPattern = `${Math.max(0.18, lineStroke * 0.65)} ${Math.max(
     if (selectedFieldItem?.type === "zone") return "ZONE SELECTED";
     return "NONE";
   })();
-
-  function getReadKeyIndex(playerId: string) {
-    const index = defensiveReadPlayerIds.indexOf(playerId);
-    return index >= 0 ? index + 1 : null;
-  }
-
-  function toggleDefensiveReadKey(playerId: string) {
-    setDefensiveReadPlayerIds((current) => {
-      if (current.includes(playerId)) {
-        return current.filter((id) => id !== playerId);
-      }
-      return [...current, playerId];
-    });
-  }
 
   function cloneDrawnLinesForHistory(lines: DrawLine[]) {
     return lines.map((line) => ({
@@ -3269,15 +3240,19 @@ const dashPattern = `${Math.max(0.18, lineStroke * 0.65)} ${Math.max(
               style={{
                 ...buttonBase,
                 background:
-                  getReadKeyIndex(selectedPlayer.id)
+                  defensiveReadPlayerId === selectedPlayer.id
                     ? "linear-gradient(180deg, #a855f7 0%, #6d28d9 100%)"
                     : "#111827",
                 color: "white",
               }}
-              onClick={() => toggleDefensiveReadKey(selectedPlayer.id)}
+              onClick={() =>
+                setDefensiveReadPlayerId((current) =>
+                  current === selectedPlayer.id ? null : selectedPlayer.id
+                )
+              }
             >
-              {getReadKeyIndex(selectedPlayer.id)
-                ? `Read Key ${getReadKeyIndex(selectedPlayer.id)} Selected`
+              {defensiveReadPlayerId === selectedPlayer.id
+                ? "Read Key Selected"
                 : "Mark as Read Key"}
             </button>
           )}
@@ -3646,7 +3621,7 @@ const dashPattern = `${Math.max(0.18, lineStroke * 0.65)} ${Math.max(
                   lineHeight: 1.35,
                 }}
               >
-                Route color follows the selected player's icon color. Change the player color to change this route color.
+                Route color follows the selected player&apos;s icon color. Change the player color to change this route color.
               </div>
               <button
                 style={{ ...buttonBase, background: "#dc2626", color: "white" }}
@@ -4393,14 +4368,9 @@ const dashPattern = `${Math.max(0.18, lineStroke * 0.65)} ${Math.max(
 
   // Field orientation stays normal. In Defensive Focus, only the players flip
   // around the active LOS: offense is above the LOS, defense is below it.
-  //
-  // IMPORTANT: Every offensive player marked on the LOS now uses the exact same
-  // visual offset. Because the player buttons are scaled in fullscreen, the
-  // center point must be offset by visualPlayerPx / 2 so the visible icon edge
-  // barely touches the line of scrimmage instead of overlapping it.
   const offenseOnLOSTop = isDefensiveFocusView
-    ? `calc(${fieldYFromYards(activeLosYards)}% - ${visualPlayerPx / 2}px)`
-    : `calc(${fieldYFromYards(activeLosYards)}% + ${visualPlayerPx / 2}px)`;
+    ? `calc(${fieldYFromYards(activeLosYards)}% - ${playerPx / 2}px)`
+    : `calc(${fieldYFromYards(activeLosYards)}% + ${playerPx / 2}px)`;
 
   const defenseOnLOSTop = isDefensiveFocusView
     ? `calc(${fieldYFromYards(clampPlayableYards(activeLosYards + 1))}% + ${
@@ -4411,7 +4381,7 @@ const dashPattern = `${Math.max(0.18, lineStroke * 0.65)} ${Math.max(
       }px)`;
 
   const playerHalfPct =
-    fieldPixelHeight > 0 ? (visualPlayerPx / 2 / fieldPixelHeight) * 100 : 0;
+    fieldPixelHeight > 0 ? (playerPx / 2 / fieldPixelHeight) * 100 : 0;
 
   function fieldPointFromClient(
     clientX: number,
@@ -4476,17 +4446,24 @@ const dashPattern = `${Math.max(0.18, lineStroke * 0.65)} ${Math.max(
     return `${fieldDisplayYFromYards(player.yardsFromGoal)}%`;
   }
 
-  function closestPlayerTo(point: FieldPoint, max = 5.5) {
+  function closestPlayerTo(
+    point: FieldPoint,
+    max = 5.5
+  ): { point: FieldPoint; distance: number; player: Player } | null {
     let closest: { point: FieldPoint; distance: number; player: Player } | null = null;
-    [...offensePlayers, ...defensePlayers].forEach((player) => {
+
+    for (const player of [...offensePlayers, ...defensePlayers]) {
       const playerPoint = visiblePlayerPoint(player);
       const distance = Math.hypot(
         playerPoint.x - point.x,
         playerPoint.y - point.y
       );
-      if (distance <= max && (!closest || distance < closest.distance))
+
+      if (distance <= max && (!closest || distance < closest.distance)) {
         closest = { point: playerPoint, distance, player };
-    });
+      }
+    }
+
     return closest;
   }
 
@@ -4496,9 +4473,9 @@ const dashPattern = `${Math.max(0.18, lineStroke * 0.65)} ${Math.max(
 
     // Snap the start of every drawn line to the closest player when the coach
     // begins drawing near a player. This works for solid, dotted, and block lines.
-    const closestPlayer = closestPlayerTo(point, 5.5);
-    const snappedStart = closestPlayer?.point ?? point;
-    const drawingPlayer = closestPlayer?.player ?? selectedPlayer;
+    const closestPlayerMatch = closestPlayerTo(point, 5.5);
+    const snappedStart = closestPlayerMatch ? closestPlayerMatch.point : point;
+    const drawingPlayer = closestPlayerMatch ? closestPlayerMatch.player : selectedPlayer;
     const drawingColor =
       drawingPlayer?.color ?? (drawingPlayer?.side === "defense" ? "#dc2626" : "#f3f4f6");
 
@@ -4654,13 +4631,13 @@ const dashPattern = `${Math.max(0.18, lineStroke * 0.65)} ${Math.max(
     // 1) Offensive line must stay on the LOS.
     updated = updated.map((p) =>
       offenseMustBeOnLOS(p)
-        ? { ...p, yardsFromGoal: offenseVisualLOSYards(p), onLOS: true }
+        ? { ...p, yardsFromGoal: OFFENSE_ON_LOS_YARDS, onLOS: true }
         : p
     );
 
     // 2) Nobody on offense can cross onto the defensive side of the LOS.
     updated = updated.map((p) => {
-      if (p.onLOS) return { ...p, yardsFromGoal: offenseVisualLOSYards(p) };
+      if (p.onLOS) return { ...p, yardsFromGoal: OFFENSE_ON_LOS_YARDS };
       return {
         ...p,
         yardsFromGoal: Math.max(
@@ -4672,7 +4649,7 @@ const dashPattern = `${Math.max(0.18, lineStroke * 0.65)} ${Math.max(
 
     // 3) Full formation legality: at least 7 on the LOS = no more than 4 in the backfield.
     // If there are too many in the backfield, move the closest eligible players onto the LOS.
-    let backfieldPlayers = updated.filter((p) => !p.onLOS);
+    const backfieldPlayers = updated.filter((p) => !p.onLOS);
     if (backfieldPlayers.length > MAX_OFFENSE_BACKFIELD) {
       const needToMoveOnLOS = backfieldPlayers.length - MAX_OFFENSE_BACKFIELD;
       const candidates = backfieldPlayers
@@ -4687,7 +4664,7 @@ const dashPattern = `${Math.max(0.18, lineStroke * 0.65)} ${Math.max(
 
       updated = updated.map((p) =>
         candidates.includes(p.id)
-          ? { ...p, yardsFromGoal: offenseVisualLOSYards(p), onLOS: true }
+          ? { ...p, yardsFromGoal: OFFENSE_ON_LOS_YARDS, onLOS: true }
           : p
       );
     }
@@ -4727,10 +4704,10 @@ const dashPattern = `${Math.max(0.18, lineStroke * 0.65)} ${Math.max(
           let nextOnLOS = false;
 
           if (mustStayOnLOS) {
-            nextYards = offenseVisualLOSYards(p);
+            nextYards = OFFENSE_ON_LOS_YARDS;
             nextOnLOS = true;
           } else if (isNearLOS && canAlignOnLOS) {
-            nextYards = offenseVisualLOSYards(p);
+            nextYards = OFFENSE_ON_LOS_YARDS;
             nextOnLOS = true;
           } else {
             nextYards = Math.max(
@@ -7478,10 +7455,7 @@ const dashPattern = `${Math.max(0.18, lineStroke * 0.65)} ${Math.max(
                     position: "absolute",
                     width: playerPx,
                     height: playerPx,
-                    borderRadius: getReadKeyIndex(player.id) ? 0 : "50%",
-                    clipPath: getReadKeyIndex(player.id)
-                      ? "polygon(50% 0%, 0% 100%, 100% 100%)"
-                      : "none",
+                    borderRadius: "50%",
                     background: player.color ?? "#dc2626",
                     color: readableTextColor(player.color ?? "#dc2626"),
                     fontWeight: 900,
@@ -7491,7 +7465,7 @@ const dashPattern = `${Math.max(0.18, lineStroke * 0.65)} ${Math.max(
                     transform: `translate(-50%,-50%) scale(${visualPlayerScale})`,
                     transformOrigin: "center center",
                     border:
-                      getReadKeyIndex(player.id)
+                      defensiveReadPlayerId === player.id
                         ? `${selectedPlayerBorderPx}px solid #a855f7`
                         : selectedSide === "defense" &&
                           selectedPlayerId === player.id
@@ -7516,24 +7490,28 @@ const dashPattern = `${Math.max(0.18, lineStroke * 0.65)} ${Math.max(
                     WebkitUserSelect: "none",
                   }}
                 >
-                  {getReadKeyIndex(player.id) && (
+                  {defensiveReadPlayerId === player.id && (
                     <span
                       style={{
                         position: "absolute",
-                        top: "56%",
+                        top: -playerPx * 0.62,
                         left: "50%",
-                        transform: "translate(-50%,-50%)",
-                        color: readableTextColor(player.color ?? "#dc2626"),
-                        fontSize: Math.max(7, playerFontPx * 0.78),
+                        transform: "translateX(-50%)",
+                        background: "#a855f7",
+                        color: "white",
+                        borderRadius: 999,
+                        padding: "1px 5px",
+                        fontSize: Math.max(6, playerFontPx * 0.68),
                         fontWeight: 950,
+                        letterSpacing: ".04em",
                         pointerEvents: "none",
-                        lineHeight: 1,
+                        boxShadow: "0 4px 10px rgba(0,0,0,.45)",
                       }}
                     >
-                      {getReadKeyIndex(player.id)}
+                      READ
                     </span>
                   )}
-                  {!getReadKeyIndex(player.id) && player.position}
+                  {player.position}
                 </button>
               ))}
               {offensePlayers.map((player) => (
@@ -7577,7 +7555,7 @@ const dashPattern = `${Math.max(0.18, lineStroke * 0.65)} ${Math.max(
                     position: "absolute",
                     width: playerPx,
                     height: playerPx,
-                    borderRadius: player.id === "c" ? 4 : "50%",
+                    borderRadius: "50%",
                     background: player.color ?? "#f3f4f6",
                     color: readableTextColor(player.color ?? "#f3f4f6"),
                     fontWeight: 900,
